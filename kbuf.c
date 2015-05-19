@@ -78,9 +78,6 @@ static int kbuf_open(struct inode *inode, struct file *file)
 {
 	struct kbuf_info *kbuf;
 
-	pr_debug("%s(inode %p, file %p, flags %x)\n",
-		__func__, inode, file, file->f_flags);
-
 	/* retrieve the reference to kbuf from the inode and save it */
 	kbuf = container_of(inode->i_cdev, struct kbuf_info, cdev);
 	file->private_data = kbuf;
@@ -98,8 +95,6 @@ static int kbuf_open(struct inode *inode, struct file *file)
 static int kbuf_close(struct inode *inode, struct file *file)
 {
 	struct kbuf_info *kbuf = file->private_data;
-
-	pr_debug("%s(inode %p, file %p)\n",  __func__, inode, file);
 
 	return fasync_helper(-1, file, 0, &kbuf->async_queue);
 }
@@ -120,9 +115,6 @@ static ssize_t kbuf_read(struct file *file, char __user *buf,
 	char *tmpbuf;
 	ssize_t retval;
 
-	pr_debug("%s(file %p, buf %p, size %zu, off %p)\n",
-		__func__, file, buf, count, offp);
-
 	if (mutex_lock_interruptible(&kbuf->lock)) {
 		retval = -ERESTARTSYS;
 		goto err1;
@@ -133,19 +125,16 @@ static ssize_t kbuf_read(struct file *file, char __user *buf,
 		mutex_unlock(&kbuf->lock);
 		/* return immediately if kbuf is open in non-blocking mode */
 		if (file->f_flags & O_NONBLOCK) {
-			pr_debug("%s(): no data, return on reading\n", __func__);
 			retval = -EAGAIN;
 			goto err1;
 		}
 		/* else suspend if kbuf is open in blocking (default) mode */
-		pr_debug("%s(): no data, \"%s\" reading, going to sleep\n",
-			__func__, current->comm);
 		if (wait_event_interruptible(kbuf->in_queue, 
 			kfifo_ready(kbuf->kfifo) != 0)) {
 			retval = -ERESTARTSYS;
 			goto err1;
 		}
-		/* reaquire the lock to check that data is really in the buffer */
+		/* reaquire the lock to check that data is really in buffer */
 		if (mutex_lock_interruptible(&kbuf->lock)) {
 			retval = -ERESTARTSYS;
 			goto err1;
@@ -158,7 +147,6 @@ static ssize_t kbuf_read(struct file *file, char __user *buf,
 		goto err2;
 	}
 	retval = kfifo_read(kbuf->kfifo, tmpbuf, count);
-	pr_debug("%s(): read %zu bytes of %zu \n", __func__, retval, count);
 	if (copy_to_user(buf, tmpbuf, retval)) {
 		retval = -EFAULT;
 		goto err3;
@@ -199,9 +187,6 @@ static ssize_t kbuf_write(struct file *file, const char __user *buf,
 	char *tmpbuf;
 	ssize_t retval;
 
-	pr_debug("%s(file %p, buf %p, size %zu, off %p)\n",
-		__func__, file, buf, count, offp);
-
 	if (mutex_lock_interruptible(&kbuf->lock)) {
 		retval = -ERESTARTSYS;
 		goto err1;
@@ -211,21 +196,21 @@ static ssize_t kbuf_write(struct file *file, const char __user *buf,
 	while (kfifo_free(kbuf->kfifo) == 0) {
 		/* release the lock */
 		mutex_unlock(&kbuf->lock);
+
 		/* return immediately if kbuf is open in non-blocking mode */
 		if (file->f_flags & O_NONBLOCK) {
-			pr_debug("%s(): no room, return on writing\n", __func__);
 			retval = -EAGAIN;
 			goto err1;
 		}
+
 		/* suspend if kbuf is open in blocking (default) mode */
-		pr_debug("%s(): no room, \"%s\" writing, going to sleep\n",
-			__func__, current->comm);
 		if (wait_event_interruptible(kbuf->out_queue, 
 			kfifo_free(kbuf->kfifo) != 0)) {
 			retval = -ERESTARTSYS;
 			goto err1;
 		}
-		/* reaquire the lock to check that data is really in the buffer */
+
+		/* reaquire the lock to check that data is really in buffer */
 		if (mutex_lock_interruptible(&kbuf->lock)) {
 			retval = -ERESTARTSYS;
 			goto err1;
@@ -268,20 +253,17 @@ err1:
  * @file: file pointer
  * @wait: poll table pointer
  * 
- * Returns a bit mask describing which operations could be completed immediately.
+ * Returns a bitmask describing which operations could be completed immediately.
  */
 static unsigned int kbuf_poll(struct file *file, poll_table *wait)
 {
 	struct kbuf_info *kbuf = file->private_data;
 	unsigned int retval = 0;
 
-	pr_debug("%s(file %p, polltable %p)\n", __func__, file, wait);
-
 	if (mutex_lock_interruptible(&kbuf->lock)) {
 		retval = POLLERR;
 		goto err1;
 	}
-
 	poll_wait(file, &kbuf->in_queue, wait);
 	poll_wait(file, &kbuf->out_queue, wait);
 
@@ -318,9 +300,6 @@ static long kbuf_compat_ioctl(struct file *file,
 {
 	struct kbuf_info *kbuf = file->private_data;
 	int retval = 0;
-
-	pr_debug("%s(file %p, cmd %d, arg %lx)\n",
-		__func__, file, cmd, arg);
 
 	if (mutex_lock_interruptible(&kbuf->lock)) {
 		retval = -ERESTARTSYS;
@@ -372,8 +351,6 @@ static int kbuf_fasync(int fd, struct file *file, int mode)
 {
 	struct kbuf_info *kbuf = file->private_data;
 
-	pr_debug("%s(fd %d, file %p, mode %x)\n",  __func__, fd, file, mode);
-
 	return fasync_helper(fd, file, mode, &kbuf->async_queue);
 }
 
@@ -401,16 +378,14 @@ static int __init kbuf_init(void)
 {
 	int i, err, retval = 0;
 
-	pr_debug("%s()\n", __func__);
-
 	/* check module parameters */
 	if (kbuf_no == 0 || kbuf_no > KBUF_MAX_NUM) {
-		pr_err("%s(): invalid kbuf_no=%d \n", __func__, kbuf_no);
+		pr_err("%s(): invalid kbuf_no=%d\n", __func__, kbuf_no);
 		retval = -EINVAL;
 		goto err1;
 	}
 	if (kbuf_size > KBUF_MAX_SIZE) {
-		pr_err("%s(): invalid kbuf_size=%d \n", __func__, kbuf_no);
+		pr_err("%s(): invalid kbuf_size=%d\n", __func__, kbuf_size);
 		retval = -EINVAL;
 		goto err1;
 	}
@@ -420,15 +395,15 @@ static int __init kbuf_init(void)
 		kbuf_id = MKDEV(kbuf_major, kbuf_minor);
 		err = register_chrdev_region(kbuf_id, kbuf_no, KBUF_NAME);
 	} else {
-		err = alloc_chrdev_region(&kbuf_id, kbuf_minor, kbuf_no, KBUF_NAME);
+		err = alloc_chrdev_region(&kbuf_id, kbuf_minor, kbuf_no,
+			KBUF_NAME);
 		kbuf_major = MAJOR(kbuf_id);
 	}
 	if (err < 0) {
-		pr_err("%s(): can't get major number %d\n", __func__, kbuf_major);
+		pr_err("%s(): can't get major no.%d\n", __func__, kbuf_major);
 		retval = -ENODEV;
 		goto err1;
         } 
-	pr_debug("%s(): allocated major number %d\n", __func__, kbuf_major);
 
 	/* init kbuf - to be done before calling cdev_add() */
 	kbuf = kzalloc((kbuf_no * sizeof(struct kbuf_info)), GFP_KERNEL);
@@ -445,9 +420,6 @@ static int __init kbuf_init(void)
 			retval = -ENOMEM;
 			goto err3;
 	        } 
-		pr_debug("%s(): created kfifo for device %d, %d\n",
-			__func__, kbuf_major, kbuf_minor + i);
-		
 		init_waitqueue_head(&kbuf[i].in_queue);
 		init_waitqueue_head(&kbuf[i].out_queue);
 		mutex_init(&kbuf[i].lock);
@@ -457,15 +429,14 @@ static int __init kbuf_init(void)
 	for (i = 0; i < kbuf_no; i++) {
 		cdev_init(&kbuf[i].cdev, &kbuf_fops);
 		kbuf[i].cdev.owner = THIS_MODULE;
-		err = cdev_add(&kbuf[i].cdev, MKDEV(kbuf_major, kbuf_minor + i), 1);
+		err = cdev_add(&kbuf[i].cdev, MKDEV(kbuf_major,
+			kbuf_minor + i), 1);
 		if (err < 0) {
 			pr_err("%s(): can't create cdev for device %d, %d\n",
 			__func__, kbuf_major, kbuf_minor + i);
 			retval = -ENODEV;
 			goto err4;
 	        } 
-		pr_debug("%s(): created cdev for device %d, %d\n",
-			__func__, kbuf_major, kbuf_minor + i);
 	}
 
 	/* register to sysfs and send uevents to create dev nodes */
@@ -473,8 +444,6 @@ static int __init kbuf_init(void)
 	for (i = 0; i < kbuf_no; i++) {
 		kbuf_device = device_create(kbuf_class, NULL, 
 			MKDEV(kbuf_major, kbuf_minor + i), NULL, KBUF_NAMES, i);
-		pr_debug("%s(): created device node for device %d, %d\n",
-			__func__, kbuf_major, kbuf_minor + i);
 	}
 
         return retval;
@@ -487,6 +456,7 @@ err2:
 err1:
 	return retval;
 }
+module_init(kbuf_init);
 
 /**
  * kbuf_exit(): Terminates the KBUF device.
@@ -495,42 +465,28 @@ static void __exit kbuf_exit(void)
 {
 	int i;
 
-	pr_debug("%s()\n", __func__);
-
 	/* unregister from sysfs and send uevents to destroy dev nodes */
-	for (i = 0; i < kbuf_no; i++) {
+	for (i = 0; i < kbuf_no; i++)
 		device_destroy(kbuf_class, MKDEV(kbuf_major, kbuf_minor + i));
-		pr_debug("%s(): deleted device node for device %d, %d\n",
-			__func__, kbuf_major, kbuf_minor + i);
-	}
 	class_destroy(kbuf_class);
 
 	/* delete cdev */
-	for (i = 0; i < kbuf_no; i++) {
+	for (i = 0; i < kbuf_no; i++)
 		cdev_del(&kbuf[i].cdev);
-		pr_debug("%s(): deleted cdev for device %d, %d\n",
-			__func__, kbuf_major, kbuf_minor + i);
-	}
 
 	/* delete kbuf */
-	for (i = 0; i < kbuf_no; i++) {
+	for (i = 0; i < kbuf_no; i++)
 		kfifo_delete(kbuf[i].kfifo);
-		pr_debug("%s(): deleted kfifo for device %d, %d\n",
-			__func__, kbuf_major, kbuf_minor + i);
-	}
 	kfree(kbuf);
 	
 	/* unregister chrdev region, release the major number */
 	unregister_chrdev_region(kbuf_id, kbuf_no);
-	pr_debug("%s(): released major number %d\n", __func__, kbuf_major);
 
 	return;
 }
-
-module_init(kbuf_init);
 module_exit(kbuf_exit);
 
-MODULE_DESCRIPTION("Paolo Rovelli - KBUF device driver");
+MODULE_DESCRIPTION("KBUF device driver");
 MODULE_AUTHOR("Paolo Rovelli <paolorovelli@yahoo.it>");
 MODULE_LICENSE("GPL");
 
