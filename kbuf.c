@@ -120,7 +120,7 @@ static ssize_t kbuf_read(struct file *file, char __user *buf,
 	char *tmpbuf;
 	ssize_t retval;
 
-	pr_debug("%s(file %p, buf %p, size %d, off %p)\n",
+	pr_debug("%s(file %p, buf %p, size %zu, off %p)\n",
 		__func__, file, buf, count, offp);
 
 	if (mutex_lock_interruptible(&kbuf->lock)) {
@@ -158,7 +158,7 @@ static ssize_t kbuf_read(struct file *file, char __user *buf,
 		goto err2;
 	}
 	retval = kfifo_read(kbuf->kfifo, tmpbuf, count);
-	pr_debug("%s(): read %d bytes of %d \n", __func__, retval, count);
+	pr_debug("%s(): read %zu bytes of %zu \n", __func__, retval, count);
 	if (copy_to_user(buf, tmpbuf, retval)) {
 		retval = -EFAULT;
 		goto err3;
@@ -199,7 +199,7 @@ static ssize_t kbuf_write(struct file *file, const char __user *buf,
 	char *tmpbuf;
 	ssize_t retval;
 
-	pr_debug("%s(file %p, buf %p, size %d, off %p)\n",
+	pr_debug("%s(file %p, buf %p, size %zu, off %p)\n",
 		__func__, file, buf, count, offp);
 
 	if (mutex_lock_interruptible(&kbuf->lock)) {
@@ -242,7 +242,7 @@ static ssize_t kbuf_write(struct file *file, const char __user *buf,
 		goto err3;
 	}
 	retval = kfifo_write(kbuf->kfifo, tmpbuf, count);
-	pr_debug("%s(): written %d bytes of %d \n", __func__, retval, count);
+	pr_debug("%s(): written %zd bytes of %zu \n", __func__, retval, count);
 	kfree(tmpbuf);
 
 	mutex_unlock(&kbuf->lock);
@@ -308,14 +308,19 @@ err1:
  * 
  * Returns 0 if no error, standard error number otherwise.
  */
+#ifndef CONFIG_COMPAT
 static int kbuf_ioctl(struct inode *inode, struct file *file,
 	unsigned int cmd, unsigned long arg)
+#else
+static long kbuf_compat_ioctl(struct file *file,
+	unsigned int cmd, unsigned long arg)
+#endif
 {
 	struct kbuf_info *kbuf = file->private_data;
 	int retval = 0;
 
-	pr_debug("%s(inode %p, file %p, cmd %d, arg %lx)\n",
-		__func__, inode, file, cmd, arg);
+	pr_debug("%s(file %p, cmd %d, arg %lx)\n",
+		__func__, file, cmd, arg);
 
 	if (mutex_lock_interruptible(&kbuf->lock)) {
 		retval = -ERESTARTSYS;
@@ -378,7 +383,11 @@ static const struct file_operations kbuf_fops = {
 	.release = kbuf_close,
 	.read = kbuf_read,
 	.write = kbuf_write,
+#ifndef CONFIG_COMPAT
 	.ioctl = kbuf_ioctl,
+#else
+	.compat_ioctl = kbuf_compat_ioctl,
+#endif
 	.poll = kbuf_poll,
 	.fasync = kbuf_fasync
 };
